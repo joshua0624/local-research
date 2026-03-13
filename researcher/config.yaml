@@ -1,8 +1,8 @@
 # ── Models ────────────────────────────────────────────────────────────────────
 models:
-  heavy: "ollama/qwen2.5:32b"   # Summarization
-  medium: "ollama/qwen2.5:14b"  # Query gen, reflection, summary updates
-  light: "ollama/qwen2.5:3b"    # Novelty / contradiction checks
+  heavy: "ollama/qwen3.5:27b"   # Summarization
+  medium: "ollama/qwen3.5:27b"  # Query gen, reflection, summary updates
+  light: "ollama/qwen3.5:27b"    # Novelty / contradiction checks (Phase 3 — not used yet)
 
 ollama_base_url: "http://localhost:11434"
 

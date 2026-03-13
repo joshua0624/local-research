@@ -15,7 +15,7 @@ PyGithub>=2.3.0
 
 # Phase 3 — Semantic dedup
 chromadb>=0.5.0
-fastlangdetect>=0.2.0
+# fastlangdetect>=0.2.0  # no Python 3.14 wheel yet — Phase 3 dep, add when available
 
 # Optional: JS-heavy sites fallback (requires `playwright install`)
 # crawl4ai>=0.4.0

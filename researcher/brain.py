@@ -90,6 +90,13 @@ class Brain:
         names = ["query_gen", "summarize", "novelty_check", "contradiction_check", "reflect", "synthesize"]
         return {n: (d / f"{n}.md").read_text() for n in names}
 
+    @staticmethod
+    def _fmt(template: str, **kwargs) -> str:
+        """Safe prompt formatting — only replaces known named placeholders."""
+        for k, v in kwargs.items():
+            template = template.replace(f"{{{k}}}", str(v))
+        return template
+
     # ── LLM call ─────────────────────────────────────────────────────────
 
     async def _call(
@@ -112,6 +119,7 @@ class Brain:
             api_base=api_base,
             timeout=timeout,
             stream=False,
+            extra_body={"think": False},
         )
         if seed is not None:
             kwargs["seed"] = seed
@@ -149,7 +157,7 @@ class Brain:
         n: int = 7,
     ) -> list[str]:
         max_age = f"{self.config.get('max_age_months', 6)} months"
-        prompt = self._prompts["query_gen"].format(
+        prompt = self._fmt(self._prompts["query_gen"],
             topic=topic,
             n=n,
             prior_queries="\n".join(f"- {q}" for q in prior_queries) or "None",
@@ -190,7 +198,7 @@ class Brain:
         running_summary: str,
     ) -> dict:
         max_chars = self.config.get("max_content_chars", 8000)
-        prompt = self._prompts["summarize"].format(
+        prompt = self._fmt(self._prompts["summarize"],
             topic=topic,
             running_summary=running_summary or "No findings yet.",
             source_url=source_url,
@@ -236,7 +244,7 @@ class Brain:
     async def reflect(
         self, topic: str, running_summary: str, prior_queries: list[str], cycle_count: int
     ) -> dict:
-        prompt = self._prompts["reflect"].format(
+        prompt = self._fmt(self._prompts["reflect"],
             topic=topic,
             running_summary=running_summary or "No findings yet.",
             prior_queries="\n".join(f"- {q}" for q in prior_queries) or "None",
@@ -276,7 +284,7 @@ class Brain:
             f"- {f['finding_text']} (source: {f['source_url']})"
             for f in findings[:60]
         ]
-        prompt = self._prompts["synthesize"].format(
+        prompt = self._fmt(self._prompts["synthesize"],
             topic=topic,
             findings_list="\n".join(lines) or "No findings yet.",
         )
