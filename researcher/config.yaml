@@ -1,0 +1,57 @@
+# ── Models ────────────────────────────────────────────────────────────────────
+models:
+  heavy: "ollama/qwen2.5:32b"   # Summarization
+  medium: "ollama/qwen2.5:14b"  # Query gen, reflection, summary updates
+  light: "ollama/qwen2.5:3b"    # Novelty / contradiction checks
+
+ollama_base_url: "http://localhost:11434"
+
+# ── Search ────────────────────────────────────────────────────────────────────
+searxng_url: "http://localhost:8080"
+max_results_per_query: 10
+
+# ── Research loop ─────────────────────────────────────────────────────────────
+min_queries: 5
+max_queries: 8
+max_age_months: 6
+min_content_words: 200
+max_concurrent_fetches: 5
+
+# ── Rate limits ───────────────────────────────────────────────────────────────
+web_fetch_delay: 2.5       # seconds between web fetches (per-domain token bucket)
+reddit_rate_limit: 60      # requests per minute
+github_courtesy_delay: 0.5 # seconds between GitHub API calls
+
+# ── LLM ───────────────────────────────────────────────────────────────────────
+temperature: 0.7
+deterministic_temperature: 0.1
+deterministic_seed: 42
+llm_timeout: 180           # seconds per LLM call
+llm_max_retries: 3
+max_content_chars: 8000    # characters passed to LLM per source
+
+# ── Dedup (Phase 1: URL-only; Phase 3: semantic) ──────────────────────────────
+similarity_novel_threshold: 0.70
+similarity_duplicate_threshold: 0.85
+
+# ── Saturation detection ──────────────────────────────────────────────────────
+saturation_zero_novel_window: 10   # consecutive sources with 0 novel findings
+saturation_low_novel_cycles: 5     # consecutive cycles with < threshold novel findings
+saturation_low_novel_threshold: 2
+
+# ── Query dedup ───────────────────────────────────────────────────────────────
+query_trigram_similarity: 0.70
+max_failed_query_attempts: 3
+
+# ── Output ────────────────────────────────────────────────────────────────────
+output_file: "findings.md"
+summary_regen_every: 5     # cycles between executive summary regeneration
+
+# ── Resilience ────────────────────────────────────────────────────────────────
+backoff_base: 2.0
+circuit_breaker_threshold: 5
+circuit_breaker_pause_minutes: 10
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+log_llm_calls: true
+log_file: "researcher.log"

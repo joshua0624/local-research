@@ -1,0 +1,21 @@
+# Phase 1 — Core loop (web search only)
+litellm>=1.35.0
+httpx>=0.27.0
+aiolimiter>=1.1.0
+trafilatura>=1.9.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+dateparser>=1.2.0
+rich>=13.7.0
+pyyaml>=6.0.1
+
+# Phase 2 — Reddit & GitHub fetchers
+praw>=7.7.0
+PyGithub>=2.3.0
+
+# Phase 3 — Semantic dedup
+chromadb>=0.5.0
+fastlangdetect>=0.2.0
+
+# Optional: JS-heavy sites fallback (requires `playwright install`)
+# crawl4ai>=0.4.0
