@@ -67,15 +67,23 @@ def _parse_args() -> argparse.Namespace:
 
 async def _stdin_reader(orchestrator: ResearchOrchestrator, stop_event: asyncio.Event) -> None:
     """Background task: reads commands from stdin and forwards to orchestrator."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
+    reader = asyncio.StreamReader()
+    protocol = asyncio.StreamReaderProtocol(reader)
+    try:
+        await loop.connect_read_pipe(lambda: protocol, sys.stdin)
+    except Exception as exc:
+        logging.getLogger(__name__).warning("stdin reader could not connect: %s", exc)
+        return
     while not stop_event.is_set():
         try:
-            line = await asyncio.to_thread(sys.stdin.readline)
-            if not line:
+            line_bytes = await reader.readline()
+            if not line_bytes:
                 break
-            cmd = line.strip()
+            cmd = line_bytes.decode(errors="replace").strip()
             if cmd:
                 await orchestrator.handle_command(cmd)
+                console.print(f"[dim]Command received: {cmd}[/dim]")
         except (asyncio.CancelledError, EOFError):
             break
         except Exception as exc:
