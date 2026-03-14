@@ -18,7 +18,7 @@ For each entity, collect:
 - The source URLs from those findings
 
 Rules:
-- Only include entities mentioned in **at least 2** of these findings
+- Include every named entity mentioned even once — corroboration is counted later across all batches
 - Claims must be specific and factual — no vague statements like "works well"
 - Each claim should be a complete, standalone sentence
 - Normalize entity names (e.g. "llama-3.3-70b" and "Llama 3.3 70B" are the same entity)
@@ -38,4 +38,4 @@ Return a JSON array only, no prose:
   }
 ]
 
-If no entities meet the criteria, return an empty array: []
+If no entities are found, return an empty array: []

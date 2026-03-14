@@ -368,7 +368,9 @@ def _novelty_scores(
     Returns (score_map, top_n novel findings sorted by score desc).
     Uses numpy if available, otherwise pure Python.
     """
-    ids = [f["id"] for f in findings if f["id"] in embeddings]
+    # Exclude low-relevance findings (off-topic tangents) before scoring
+    relevant = [f for f in findings if (f.get("relevance_score") or 0) >= 4]
+    ids = [f["id"] for f in relevant if f["id"] in embeddings]
     if not ids:
         return {}, []
 
@@ -390,7 +392,7 @@ def _novelty_scores(
 
     score_map = {fid: float(d) for fid, d in zip(ids, dists)}
 
-    finding_by_id = {f["id"]: f for f in findings}
+    finding_by_id = {f["id"]: f for f in relevant}
     scored = sorted(score_map.items(), key=lambda x: x[1], reverse=True)
     novel = []
     for fid, score in scored[:top_n]:
