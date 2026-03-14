@@ -2,9 +2,14 @@
 models:
   heavy: "ollama/qwen3.5:27b"   # Summarization
   medium: "ollama/qwen3.5:27b"  # Query gen, reflection, summary updates
-  light: "ollama/qwen3.5:27b"    # Novelty / contradiction checks (Phase 3 — not used yet)
+  light: "ollama/qwen3:1.7b"     # Novelty / contradiction checks
 
 ollama_base_url: "http://localhost:11434"
+
+# ── Embeddings (Phase 3) ───────────────────────────────────────────────────────
+embedding_model: "nomic-embed-text"
+embed_batch_size: 32
+embed_timeout: 60
 
 # ── Search ────────────────────────────────────────────────────────────────────
 searxng_url: "http://localhost:8080"
@@ -16,6 +21,18 @@ max_queries: 8
 max_age_months: 6
 min_content_words: 200
 max_concurrent_fetches: 5
+
+# ── Source selection ──────────────────────────────────────────────────────────
+# sources: [web, reddit, github]   # uncomment to restrict; default is all three
+
+# ── Reddit credentials (optional — JSON endpoint works without these) ─────────
+# reddit_client_id: ""
+# reddit_client_secret: ""
+# reddit_user_agent: "LocalResearcher/1.0"
+
+# ── GitHub credentials (optional — raises rate limit from 60 to 5000 req/hr) ──
+# github_token: ""
+# (can also be set via GITHUB_TOKEN env var)
 
 # ── Rate limits ───────────────────────────────────────────────────────────────
 web_fetch_delay: 2.5       # seconds between web fetches (per-domain token bucket)
@@ -30,7 +47,7 @@ llm_timeout: 180           # seconds per LLM call
 llm_max_retries: 3
 max_content_chars: 8000    # characters passed to LLM per source
 
-# ── Dedup (Phase 1: URL-only; Phase 3: semantic) ──────────────────────────────
+# ── Dedup (Phase 1: URL; Phase 3: semantic via ChromaDB + nomic-embed-text) ───
 similarity_novel_threshold: 0.70
 similarity_duplicate_threshold: 0.85
 
@@ -45,7 +62,12 @@ max_failed_query_attempts: 3
 
 # ── Output ────────────────────────────────────────────────────────────────────
 output_file: "findings.md"
-summary_regen_every: 5     # cycles between executive summary regeneration
+summary_regen_every: 5     # cycles between automatic executive summary regeneration
+synthesize_top_n: 20       # highest-relevance findings passed as grounding to synthesize()
+
+# ── Section clustering (Phase 4) ───────────────────────────────────────────────
+cluster_threshold: 10      # minimum findings before clustering is attempted
+cluster_every_cycles: 5    # re-cluster every N cycles once threshold is reached
 
 # ── Resilience ────────────────────────────────────────────────────────────────
 backoff_base: 2.0

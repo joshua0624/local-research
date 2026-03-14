@@ -16,6 +16,7 @@ import httpx
 from aiolimiter import AsyncLimiter
 
 from .base import BaseFetcher, FetchResult
+from .circuit_breaker import CircuitBreaker
 
 try:
     import trafilatura
@@ -126,6 +127,9 @@ def _extract_with_bs4(html: str, url: str) -> tuple[str, str, Optional[str], Opt
     return text, title, author, _parse_date(raw_date)
 
 
+_CB_TRIP_STATUSES = frozenset([429, 500, 502, 503, 504])
+
+
 class WebFetcher(BaseFetcher):
     def __init__(
         self,
@@ -133,10 +137,12 @@ class WebFetcher(BaseFetcher):
         max_concurrent: int = 5,
         max_age_months: int = 6,
         timeout: float = 15.0,
+        circuit_breaker: CircuitBreaker | None = None,
     ):
         self.max_age_months = max_age_months
         self._limiter = AsyncLimiter(max_rate=1, time_period=rate_limit)
         self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._cb = circuit_breaker
         self._client = httpx.AsyncClient(
             headers=_DEFAULT_HEADERS,
             timeout=httpx.Timeout(timeout),
@@ -157,13 +163,23 @@ class WebFetcher(BaseFetcher):
                 return await self._fetch_inner(url)
 
     async def _fetch_inner(self, url: str) -> FetchResult:
+        host = urlparse(url).hostname or url
+        if self._cb and self._cb.is_open(host):
+            return FetchResult(url=url, source_type="web", error=f"circuit open: {host}")
+
         try:
             resp = await self._client.get(url)
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            return FetchResult(url=url, source_type="web", error=f"HTTP {exc.response.status_code}")
+            status = exc.response.status_code
+            if self._cb and status in _CB_TRIP_STATUSES:
+                self._cb.record_failure(host)
+            return FetchResult(url=url, source_type="web", error=f"HTTP {status}")
         except httpx.RequestError as exc:
             return FetchResult(url=url, source_type="web", error=str(exc))
+
+        if self._cb:
+            self._cb.record_success(host)
 
         content_type = resp.headers.get("content-type", "")
         if "text/html" not in content_type and "text/plain" not in content_type:

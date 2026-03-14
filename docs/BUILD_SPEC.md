@@ -142,6 +142,8 @@ The LLM consumer processes fetched text from the queue while producers continue 
 
 **Context management:** Pass only the compressed Running Research Summary (executive summary + one-sentence findings list) as context — never the full master document. This keeps prompt size stable across long sessions.
 
+The Running Research Summary also serves as the primary input to the final `synthesize` call. The synthesize prompt receives the full running summary (which covers all findings) plus the top-N highest-relevance findings as grounding examples. `synthesize_top_n` (default 20) is configurable. This avoids the context scaling problem for long sessions with hundreds of findings.
+
 ### Phase 5: Novelty Check (Two-Layer Dedup)
 
 **Layer 1 — URL dedup:** SQLite lookup. Skip already-visited URLs. Fast, zero-cost.

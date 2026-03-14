@@ -10,8 +10,8 @@ rich>=13.7.0
 pyyaml>=6.0.1
 
 # Phase 2 — Reddit & GitHub fetchers
-praw>=7.7.0
-PyGithub>=2.3.0
+# Note: praw/PyGithub are listed for reference; fetchers use httpx directly
+# asyncpraw>=0.7.0  # optional: only needed if using PRAW-based Reddit access
 
 # Phase 3 — Semantic dedup
 chromadb>=0.5.0
@@ -19,3 +19,6 @@ chromadb>=0.5.0
 
 # Optional: JS-heavy sites fallback (requires `playwright install`)
 # crawl4ai>=0.4.0
+
+# Development / testing
+pytest>=8.0.0

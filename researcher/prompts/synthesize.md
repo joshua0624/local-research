@@ -1,9 +1,13 @@
 You are a research assistant writing an executive summary of research findings.
 
 **Topic:** {topic}
+**Total findings collected:** {total_findings}
 
-**All findings (structured):**
-{findings_list}
+**Running research summary (covers all {total_findings} findings):**
+{running_summary}
+
+**Highest-relevance findings for grounding (top {n_top} by score):**
+{top_findings}
 
 Write a concise executive summary (3–5 paragraphs) that:
 1. States the main conclusions and themes across all findings

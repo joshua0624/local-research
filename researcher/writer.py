@@ -80,6 +80,10 @@ class WriterActor:
             w.log_event(**p)
         elif k == "write_file":
             w.write_file_atomic(**p)
+        elif k == "save_running_summary":
+            w.save_running_summary(**p)
+        elif k == "update_finding_sections":
+            w.update_finding_sections(p)
         else:
             raise ValueError(f"Unknown write kind: {k}")
 
@@ -113,3 +117,9 @@ class WriterActor:
 
     async def write_file(self, path: str, content: str) -> None:
         await self._enqueue("write_file", dict(path=path, content=content))
+
+    async def save_running_summary(self, session_id: str, summary: str) -> None:
+        await self._enqueue("save_running_summary", dict(session_id=session_id, summary=summary))
+
+    async def update_finding_sections(self, assignments: dict) -> None:
+        await self._enqueue("update_finding_sections", assignments)

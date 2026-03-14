@@ -5,7 +5,9 @@ Usage:
     python -m researcher.main --topic "local LLM coding agents" --max-age 3
 
 Optional flags:
-    --sources web                   (default: web; reddit/github in Phase 2)
+    --sources web,reddit,github     comma-separated list (default: all three)
+    --subreddits ollama,LocalLLaMA  extra subreddits to seed
+    --github-orgs langchain-ai      extra GitHub orgs to seed
     --max-age 6                     months (default: 6)
     --output findings.md
     --db researcher.db
@@ -55,13 +57,40 @@ def _parse_args() -> argparse.Namespace:
         prog="researcher",
         description="Local LLM research assistant — searches the web and builds a findings document.",
     )
-    p.add_argument("--topic", "-t", required=True, help="Research topic")
+    p.add_argument("--topic", "-t", default=None, help="Research topic (required unless --resume)")
     p.add_argument("--max-age", type=int, default=None, metavar="MONTHS", help="Max source age in months")
     p.add_argument("--output", "-o", default=None, help="Output markdown file (default: findings.md)")
     p.add_argument("--db", default="researcher.db", help="SQLite database path")
     p.add_argument("--config", default=str(_DEFAULT_CONFIG), help="Config YAML path")
     p.add_argument("--deterministic", action="store_true", help="Low temperature, fixed seed")
     p.add_argument("--quiet", "-q", action="store_true", help="Suppress progress output")
+    p.add_argument(
+        "--sources",
+        default=None,
+        help="Comma-separated source types to use: web,reddit,github (default: all)",
+    )
+    p.add_argument(
+        "--subreddits",
+        default=None,
+        help="Comma-separated subreddits to seed (e.g. ollama,LocalLLaMA)",
+    )
+    p.add_argument(
+        "--github-orgs",
+        default=None,
+        dest="github_orgs",
+        help="Comma-separated GitHub orgs/users to seed (e.g. langchain-ai)",
+    )
+    p.add_argument(
+        "--resume",
+        default=None,
+        metavar="SESSION_ID",
+        help="Resume a prior session by its session ID",
+    )
+    p.add_argument(
+        "--sessions",
+        action="store_true",
+        help="List recent sessions and exit",
+    )
     return p.parse_args()
 
 
@@ -83,7 +112,6 @@ async def _stdin_reader(orchestrator: ResearchOrchestrator, stop_event: asyncio.
             cmd = line_bytes.decode(errors="replace").strip()
             if cmd:
                 await orchestrator.handle_command(cmd)
-                console.print(f"[dim]Command received: {cmd}[/dim]")
         except (asyncio.CancelledError, EOFError):
             break
         except Exception as exc:
@@ -91,21 +119,60 @@ async def _stdin_reader(orchestrator: ResearchOrchestrator, stop_event: asyncio.
 
 
 async def _run(args: argparse.Namespace) -> None:
+    from .state import StateReader
+
     config = _load_config(Path(args.config))
     _setup_logging(config)
+
+    # --sessions: list prior sessions and exit
+    if args.sessions:
+        reader = StateReader(args.db)
+        sessions = reader.list_sessions()
+        if not sessions:
+            console.print("[dim]No sessions found in {args.db}[/dim]")
+        else:
+            console.print(f"\n[bold]Sessions in {args.db}:[/bold]")
+            for s in sessions:
+                console.print(f"  [cyan]{s['id']}[/cyan]  {s['start_time'][:16]}  {s['topic']}")
+        return
+
+    # Resolve topic and session_id
+    is_resume = bool(args.resume)
+    if is_resume:
+        reader = StateReader(args.db)
+        session_data = reader.get_session(args.resume)
+        if not session_data:
+            console.print(
+                f"[red]Session [bold]{args.resume}[/bold] not found in {args.db}[/red]"
+            )
+            sys.exit(1)
+        topic = args.topic or session_data["topic"]
+        session_id = args.resume
+    else:
+        if not args.topic:
+            console.print("[red]--topic is required unless --resume is used.[/red]")
+            sys.exit(1)
+        topic = args.topic
+        session_id = str(uuid.uuid4())[:8]
 
     # CLI overrides
     if args.max_age is not None:
         config["max_age_months"] = args.max_age
     if args.deterministic:
         config["temperature"] = config.get("deterministic_temperature", 0.1)
+    if args.sources is not None:
+        config["sources"] = [s.strip() for s in args.sources.split(",") if s.strip()]
+    if args.subreddits is not None:
+        config["seed_subreddits"] = [s.strip() for s in args.subreddits.split(",") if s.strip()]
+    if args.github_orgs is not None:
+        config["seed_github_orgs"] = [o.strip() for o in args.github_orgs.split(",") if o.strip()]
 
     output_path = args.output or config.get("output_file", "findings.md")
-    session_id = str(uuid.uuid4())[:8]
 
     if not args.quiet:
+        mode = "[yellow]RESUMING[/yellow]" if is_resume else "starting"
         console.print(
-            f"\n[bold]LocalResearcher[/bold]  topic=[cyan]{args.topic}[/cyan]  "
+            f"\n[bold]LocalResearcher[/bold]  {mode}  topic=[cyan]{topic}[/cyan]  "
             f"max_age={config['max_age_months']}m  session={session_id}"
         )
         console.print(
@@ -114,13 +181,15 @@ async def _run(args: argparse.Namespace) -> None:
         )
 
     orchestrator = ResearchOrchestrator(
-        topic=args.topic,
+        topic=topic,
         config=config,
         session_id=session_id,
         output_path=output_path,
         prompts_dir=str(_DEFAULT_PROMPTS),
         db_path=args.db,
         deterministic=args.deterministic,
+        is_resume=is_resume,
+        quiet=args.quiet,
     )
 
     stop_event = asyncio.Event()

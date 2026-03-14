@@ -16,6 +16,7 @@ class FetchResult:
     date: Optional[str] = None   # ISO-8601 string or None
     word_count: int = 0
     error: Optional[str] = None
+    metadata: dict = field(default_factory=dict)  # source-specific extras (stars, description, …)
 
     def ok(self) -> bool:
         return self.error is None and self.word_count > 0

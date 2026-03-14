@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Runtime output
+findings.md
+researcher.log
+*.db
+*.db-shm
+*.db-wal
+docs/results.txt
+
+# ChromaDB (Phase 3)
+chroma_db/
+.chroma/
+
+# Misc
+.env
+.DS_Store

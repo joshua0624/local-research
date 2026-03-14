@@ -18,10 +18,11 @@ PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
 
 CREATE TABLE IF NOT EXISTS sessions (
-    id          TEXT PRIMARY KEY,
-    topic       TEXT NOT NULL,
-    start_time  TEXT NOT NULL,
-    config_json TEXT NOT NULL
+    id               TEXT PRIMARY KEY,
+    topic            TEXT NOT NULL,
+    start_time       TEXT NOT NULL,
+    config_json      TEXT NOT NULL,
+    running_summary  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS urls_seen (
@@ -44,7 +45,8 @@ CREATE TABLE IF NOT EXISTS findings (
     relevance_score INTEGER,
     quality_type    TEXT,
     embedding_id    TEXT,
-    section         TEXT
+    section         TEXT,
+    conflicting     INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sources (
@@ -54,7 +56,10 @@ CREATE TABLE IF NOT EXISTS sources (
     title               TEXT,
     source_type         TEXT,
     fetch_date          TEXT,
-    novel_findings_count INTEGER DEFAULT 0
+    novel_findings_count INTEGER DEFAULT 0,
+    stars               INTEGER,
+    description         TEXT,
+    language            TEXT
 );
 
 CREATE TABLE IF NOT EXISTS queries_used (
@@ -154,6 +159,20 @@ class StateReader:
         ).fetchone()
         return dict(row) if row else None
 
+    def get_running_summary(self, session_id: str) -> str:
+        row = self._conn().execute(
+            "SELECT running_summary FROM sessions WHERE id=?", (session_id,)
+        ).fetchone()
+        if row and row[0]:
+            return row[0]
+        return ""
+
+    def list_sessions(self) -> list[dict]:
+        rows = self._conn().execute(
+            "SELECT id, topic, start_time FROM sessions ORDER BY start_time DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def count_findings(self, session_id: str) -> int:
         row = self._conn().execute(
             "SELECT COUNT(*) FROM findings WHERE session_id=?", (session_id,)
@@ -177,12 +196,25 @@ class StateWriter:
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.executescript(_SCHEMA)
         self.conn.commit()
+        # Migrations for existing databases
+        for ddl in [
+            "ALTER TABLE findings ADD COLUMN conflicting INTEGER DEFAULT 0",
+            "ALTER TABLE sessions ADD COLUMN running_summary TEXT",
+            "ALTER TABLE sources ADD COLUMN stars INTEGER",
+            "ALTER TABLE sources ADD COLUMN description TEXT",
+            "ALTER TABLE sources ADD COLUMN language TEXT",
+        ]:
+            try:
+                self.conn.execute(ddl)
+                self.conn.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
     # ── write primitives ───────────────────────────────────────────────────
 
     def create_session(self, session_id: str, topic: str, config: dict) -> None:
         self.conn.execute(
-            "INSERT OR IGNORE INTO sessions VALUES (?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO sessions (id, topic, start_time, config_json) VALUES (?, ?, ?, ?)",
             (session_id, topic, _now_utc(), json.dumps(config)),
         )
         self.conn.commit()
@@ -199,8 +231,8 @@ class StateWriter:
             """INSERT OR IGNORE INTO findings
                (id, session_id, cycle_num, finding_text, source_url,
                 fetch_timestamp, source_hash, source_type, relevance_score,
-                quality_type, embedding_id, section)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                quality_type, embedding_id, section, conflicting)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 finding["id"],
                 finding["session_id"],
@@ -214,6 +246,7 @@ class StateWriter:
                 finding.get("quality_type"),
                 finding.get("embedding_id"),
                 finding.get("section"),
+                finding.get("conflicting", 0),
             ),
         )
         self.conn.commit()
@@ -221,8 +254,9 @@ class StateWriter:
     def insert_source(self, source: dict) -> None:
         self.conn.execute(
             """INSERT INTO sources
-               (session_id, url, title, source_type, fetch_date, novel_findings_count)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               (session_id, url, title, source_type, fetch_date, novel_findings_count,
+                stars, description, language)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 source["session_id"],
                 source["url"],
@@ -230,8 +264,27 @@ class StateWriter:
                 source.get("source_type"),
                 source.get("fetch_date", _now_utc()),
                 source.get("novel_findings_count", 0),
+                source.get("stars"),
+                source.get("description"),
+                source.get("language"),
             ),
         )
+        self.conn.commit()
+
+    def save_running_summary(self, session_id: str, summary: str) -> None:
+        self.conn.execute(
+            "UPDATE sessions SET running_summary=? WHERE id=?",
+            (summary, session_id),
+        )
+        self.conn.commit()
+
+    def update_finding_sections(self, assignments: dict) -> None:
+        """assignments: {finding_id: section_name}"""
+        for fid, section in assignments.items():
+            self.conn.execute(
+                "UPDATE findings SET section=? WHERE id=?",
+                (section, fid),
+            )
         self.conn.commit()
 
     def insert_query(self, session_id: str, cycle_num: int, query_text: str) -> None:

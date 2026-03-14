@@ -24,6 +24,13 @@ class FindingsStore:
 
     # ── mutations ─────────────────────────────────────────────────────────
 
+    def update_sections(self, assignments: dict) -> None:
+        """Apply section assignments {finding_id: section_name} to in-memory findings."""
+        for f in self._findings:
+            sec = assignments.get(f["id"])
+            if sec:
+                f["section"] = sec
+
     def add_finding(self, finding: dict) -> None:
         self._findings.append(finding)
 
@@ -106,7 +113,8 @@ class FindingsStore:
                 if len(by_section) > 1:
                     lines += [f"### {section}", ""]
                 for f in items:
-                    lines += [f"- **Finding:** {f['finding_text']}"]
+                    conflict_tag = " `⚠ conflicts with another finding`" if f.get("conflicting") else ""
+                    lines += [f"- **Finding:** {f['finding_text']}{conflict_tag}"]
                     url = f.get("source_url", "")
                     src_type = f.get("source_type", "web")
                     date = f.get("fetch_timestamp", "")[:10]
@@ -125,14 +133,24 @@ class FindingsStore:
             lines += [
                 "## Notable Projects & Tools",
                 "",
-                "| Project | URL | What It Does | Relevance |",
-                "|---------|-----|-------------|-----------|",
+                "| Project | Stars | Language | What It Does | Findings |",
+                "|---------|-------|----------|-------------|----------|",
             ]
-            for s in github_sources[:20]:
+            # Sort by stars descending, then novel findings descending
+            sorted_gh = sorted(
+                github_sources,
+                key=lambda s: (s.get("stars") or 0, s.get("novel_findings_count") or 0),
+                reverse=True,
+            )
+            for s in sorted_gh[:20]:
                 url = s.get("url", "")
                 title = s.get("title") or url.split("/")[-1]
+                stars = s.get("stars")
+                stars_str = f"{stars:,}" if stars is not None else "—"
+                lang = s.get("language") or "—"
+                desc = (s.get("description") or "—")[:80]
                 nf = s.get("novel_findings_count", 0)
-                lines.append(f"| {title} | {url} | — | {nf} findings |")
+                lines.append(f"| [{title}]({url}) | {stars_str} | {lang} | {desc} | {nf} |")
             lines.append("")
 
         # Leads to Follow Up

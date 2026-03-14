@@ -87,7 +87,10 @@ class Brain:
         self._llm_log: list[dict] = []
 
     def _load_prompts(self, d: Path) -> dict[str, str]:
-        names = ["query_gen", "summarize", "novelty_check", "contradiction_check", "reflect", "synthesize"]
+        names = [
+            "query_gen", "summarize", "novelty_check",
+            "contradiction_check", "reflect", "synthesize", "cluster",
+        ]
         return {n: (d / f"{n}.md").read_text() for n in names}
 
     @staticmethod
@@ -279,13 +282,108 @@ class Brain:
             "saturated": bool(result.get("saturated", False)),
         }
 
-    async def synthesize(self, topic: str, findings: list[dict]) -> str:
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """Embed a list of texts via Ollama, batched. Returns one vector per text."""
+        model = self.config.get("embedding_model", "nomic-embed-text")
+        base_url = self.config["ollama_base_url"]
+        batch_size = self.config.get("embed_batch_size", 32)
+        timeout = self.config.get("embed_timeout", 60)
+        all_embeddings: list[list[float]] = []
+
+        import httpx
+        async with httpx.AsyncClient(timeout=float(timeout)) as client:
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i : i + batch_size]
+                try:
+                    resp = await client.post(
+                        f"{base_url}/api/embed",
+                        json={"model": model, "input": batch},
+                    )
+                    resp.raise_for_status()
+                    all_embeddings.extend(resp.json()["embeddings"])
+                except Exception:
+                    # Fallback: older Ollama versions use /api/embeddings with a single prompt
+                    for text in batch:
+                        resp = await client.post(
+                            f"{base_url}/api/embeddings",
+                            json={"model": model, "prompt": text},
+                        )
+                        resp.raise_for_status()
+                        all_embeddings.append(resp.json()["embedding"])
+
+        return all_embeddings
+
+    async def novelty_check(self, existing_finding: str, new_finding: str) -> dict:
+        """
+        Ask the light model whether the new finding adds value over the existing one.
+        Returns {"keep": bool, "reason": str}.
+        """
+        prompt = self._fmt(
+            self._prompts["novelty_check"],
+            existing_finding=existing_finding,
+            new_finding=new_finding,
+        )
+        raw = await self._call("light", prompt, temperature=0.1)
+        try:
+            result = _parse_json(raw)
+            if not isinstance(result, dict):
+                raise ValueError("expected dict")
+            return {"keep": bool(result.get("keep", True)), "reason": result.get("reason", "")}
+        except Exception as exc:
+            log.warning("novelty_check parse failed: %s — defaulting to keep=True", exc)
+            return {"keep": True, "reason": "parse error"}
+
+    async def cluster_findings(self, topic: str, findings: list[dict]) -> dict:
+        """
+        Cluster findings into themed sections.
+        Returns {finding_id: section_name}.
+        """
+        if not findings:
+            return {}
+
+        # Build a compact numbered list (cap at 80 findings to avoid huge prompts)
+        capped = findings[:80]
+        items = []
+        for i, f in enumerate(capped):
+            snippet = f["finding_text"][:120].replace("\n", " ")
+            items.append(f"{i}: {snippet}")
+
+        prompt = self._fmt(
+            self._prompts["cluster"],
+            topic=topic,
+            findings="\n".join(items),
+            count=len(capped),
+        )
+        raw = await self._call("medium", prompt, temperature=0.3)
+        try:
+            result = _parse_json(raw)
+            if not isinstance(result, dict):
+                raise ValueError("expected dict")
+            assignments: dict[str, str] = {}
+            for i_str, section in result.items():
+                try:
+                    idx = int(i_str)
+                    if 0 <= idx < len(capped):
+                        assignments[capped[idx]["id"]] = str(section).strip()
+                except (ValueError, KeyError):
+                    pass
+            return assignments
+        except Exception as exc:
+            log.warning("cluster_findings parse failed: %s", exc)
+            return {}
+
+    async def synthesize(self, topic: str, findings: list[dict], running_summary: str = "") -> str:
+        n_top = self.config.get("synthesize_top_n", 20)
+        top = sorted(findings, key=lambda f: f.get("relevance_score") or 0, reverse=True)[:n_top]
         lines = [
             f"- {f['finding_text']} (source: {f['source_url']})"
-            for f in findings[:60]
+            for f in top
         ]
         prompt = self._fmt(self._prompts["synthesize"],
             topic=topic,
-            findings_list="\n".join(lines) or "No findings yet.",
+            total_findings=len(findings),
+            running_summary=running_summary or "No running summary available.",
+            top_findings="\n".join(lines) or "No findings yet.",
+            n_top=n_top,
         )
         return (await self._call("heavy", prompt)).strip()
