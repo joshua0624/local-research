@@ -104,21 +104,21 @@ def _parse_args() -> argparse.Namespace:
 
 
 async def _stdin_reader(orchestrator: ResearchOrchestrator, stop_event: asyncio.Event) -> None:
-    """Background task: reads commands from stdin and forwards to orchestrator."""
+    """Background task: reads commands from stdin and forwards to orchestrator.
+
+    Uses run_in_executor (thread) instead of connect_read_pipe so that stdin's
+    file descriptor is never set to non-blocking mode.  On macOS, stdin and
+    stdout share the same PTY open-file-description, so making stdin non-blocking
+    (as connect_read_pipe does) also makes stdout non-blocking, which causes
+    BlockingIOError (errno 35) in Rich's console writes.
+    """
     loop = asyncio.get_running_loop()
-    reader = asyncio.StreamReader()
-    protocol = asyncio.StreamReaderProtocol(reader)
-    try:
-        await loop.connect_read_pipe(lambda: protocol, sys.stdin)
-    except Exception as exc:
-        logging.getLogger(__name__).warning("stdin reader could not connect: %s", exc)
-        return
     while not stop_event.is_set():
         try:
-            line_bytes = await reader.readline()
-            if not line_bytes:
+            line = await loop.run_in_executor(None, sys.stdin.readline)
+            if not line:
                 break
-            cmd = line_bytes.decode(errors="replace").strip()
+            cmd = line.strip()
             if cmd:
                 await orchestrator.handle_command(cmd)
         except (asyncio.CancelledError, EOFError):
