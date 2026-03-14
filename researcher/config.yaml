@@ -43,7 +43,7 @@ github_courtesy_delay: 0.5 # seconds between GitHub API calls
 temperature: 0.7
 deterministic_temperature: 0.1
 deterministic_seed: 42
-llm_timeout: 180           # seconds per LLM call
+llm_timeout: 600           # seconds per LLM call
 llm_max_retries: 3
 max_content_chars: 8000    # characters passed to LLM per source
 
