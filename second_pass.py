@@ -194,7 +194,7 @@ async def _map_chunk(
         .replace("{findings}", "\n".join(lines))
     )
 
-    raw = await brain._call("medium", prompt, temperature=0.2)
+    raw = await brain._call("medium", prompt, temperature=0.7)
     try:
         parsed = _parse_json(raw)
         if not isinstance(parsed, list):
