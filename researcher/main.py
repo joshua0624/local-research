@@ -19,9 +19,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 import uuid
 from pathlib import Path
+
+# Python 3.14 sets stdout/stderr to non-blocking on some terminals, which
+# causes BlockingIOError (errno 35) when Rich tries to write large buffers.
+for _fd in (sys.stdout, sys.stderr):
+    try:
+        os.set_blocking(_fd.fileno(), True)
+    except Exception:
+        pass
 
 import yaml
 from rich.console import Console
@@ -119,6 +128,14 @@ async def _stdin_reader(orchestrator: ResearchOrchestrator, stop_event: asyncio.
 
 
 async def _run(args: argparse.Namespace) -> None:
+    # asyncio may set stdout/stderr non-blocking; restore blocking mode so Rich
+    # doesn't get BlockingIOError (errno 35) on macOS / Python 3.14.
+    for _fd in (sys.stdout, sys.stderr):
+        try:
+            os.set_blocking(_fd.fileno(), True)
+        except Exception:
+            pass
+
     from .state import StateReader
 
     config = _load_config(Path(args.config))
