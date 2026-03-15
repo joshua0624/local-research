@@ -819,7 +819,16 @@ async def _run(args: argparse.Namespace) -> None:
         # ── MAP + REDUCE ──
         entities: list[dict] = []
 
-        if not args.synthesis_only:
+        if args.render_only:
+            if Path(intermediate_path).exists():
+                entities = json.loads(Path(intermediate_path).read_text())
+                console.print(
+                    f"[dim]Loaded {len(entities)} entities from {intermediate_path}[/dim]"
+                )
+            else:
+                raise SystemExit(f"--render-only: no intermediate file at {intermediate_path}")
+
+        elif not args.synthesis_only:
             all_mentions = await _map_phase(brain, topic, findings, args.chunk_size, progress)
             console.print(f"MAP: [bold]{len(all_mentions)}[/bold] entity mentions extracted")
 
@@ -852,7 +861,7 @@ async def _run(args: argparse.Namespace) -> None:
                 )
 
         # ── SYNTHESIS ──
-        if entities:
+        if entities and not args.render_only:
             await _synthesis_phase(brain, topic, entities, progress)
 
     # ── RENDER ──
@@ -878,6 +887,8 @@ def main() -> None:
                    help="Skip embedding and novelty scoring entirely")
     p.add_argument("--synthesis-only", action="store_true", dest="synthesis_only",
                    help="Skip MAP/REDUCE, load existing intermediate JSON and re-synthesize")
+    p.add_argument("--render-only", action="store_true", dest="render_only",
+                   help="Skip everything, load existing intermediate JSON and render report")
     args = p.parse_args()
     asyncio.run(_run(args))
 
