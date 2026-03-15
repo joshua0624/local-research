@@ -173,12 +173,19 @@ async def _embed_all(
 
 # ── MAP phase ─────────────────────────────────────────────────────────────────
 
+_ENTITY_TYPES: dict[str, frozenset[str]] = {
+    "technical": frozenset({"model", "tool", "workflow", "hardware"}),
+    "career":    frozenset({"skill", "tool", "strategy", "resource"}),
+}
+
+
 async def _map_chunk(
     brain: Brain,
     topic: str,
     chunk: list[dict],
     chunk_idx: int,
     prompt_template: str,
+    mode: str,
 ) -> list[dict]:
     """Run one MAP LLM call on a chunk. Returns list of EntityMention dicts."""
     lines = []
@@ -203,13 +210,14 @@ async def _map_chunk(
         console.print(f"[yellow]  MAP chunk {chunk_idx} parse failed: {exc}[/yellow]")
         return []
 
+    allowed_types = _ENTITY_TYPES.get(mode, _ENTITY_TYPES["technical"])
     mentions: list[dict] = []
     for item in parsed:
         if not isinstance(item, dict):
             continue
         name = str(item.get("name", "")).strip()
         entity_type = str(item.get("entity_type", "")).strip().lower()
-        if not name or entity_type not in ("model", "tool", "workflow", "hardware"):
+        if not name or entity_type not in allowed_types:
             continue
 
         indices = item.get("finding_indices", [])
@@ -237,14 +245,16 @@ async def _map_phase(
     findings: list[dict],
     chunk_size: int,
     progress: Progress,
+    mode: str = "technical",
 ) -> list[dict]:
-    prompt_template = (_PROMPTS_DIR / "map_extract.md").read_text()
+    prompt_file = "map_extract_career.md" if mode == "career" else "map_extract.md"
+    prompt_template = (_PROMPTS_DIR / prompt_file).read_text()
     chunks = [findings[i : i + chunk_size] for i in range(0, len(findings), chunk_size)]
     task = progress.add_task("MAP extraction…", total=len(chunks))
     all_mentions: list[dict] = []
 
     for i, chunk in enumerate(chunks):
-        mentions = await _map_chunk(brain, topic, chunk, i, prompt_template)
+        mentions = await _map_chunk(brain, topic, chunk, i, prompt_template, mode)
         all_mentions.extend(mentions)
         progress.advance(task, 1)
         console.print(
@@ -472,9 +482,11 @@ async def _synthesis_phase(
     topic: str,
     entities: list[dict],
     progress: Progress,
+    mode: str = "technical",
 ) -> None:
     """Generate prose summaries for all entities in-place."""
-    synth_template = (_PROMPTS_DIR / "entity_synthesis.md").read_text()
+    prompt_file = "entity_synthesis_career.md" if mode == "career" else "entity_synthesis.md"
+    synth_template = (_PROMPTS_DIR / prompt_file).read_text()
     task = progress.add_task("Synthesizing entities…", total=len(entities))
 
     for entity in entities:
@@ -774,6 +786,259 @@ def _render_report(
     console.print(f"\n[bold green]Written → {output_path}[/bold green]")
 
 
+def _render_report_career(
+    output_path: str,
+    topic: str,
+    session_id: str,
+    findings: list[dict],
+    sources: list[dict],
+    entities: list[dict],
+    novel_findings: list[dict],
+    top_n_novel: int,
+) -> None:
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    lines: list[str] = []
+
+    def ln(text: str = "") -> None:
+        lines.append(text)
+
+    finding_index: dict[str, int] = {f["id"]: i + 1 for i, f in enumerate(findings)}
+    fid_to_entities: dict[str, list[str]] = {}
+    for e in entities:
+        for fid in e["finding_ids"]:
+            fid_to_entities.setdefault(fid, []).append(f"{e['entity_type']}:{e['name']}")
+    novel_scores: dict[str, float] = {nf["id"]: nf["novelty_score"] for nf in novel_findings}
+    finding_by_id = {f["id"]: f for f in findings}
+
+    # ── Header ──
+    ln(f"# Career Research Report: {topic}")
+    ln()
+    ln(f"**Session:** `{session_id}`  ")
+    ln(f"**Analysis date:** {now}  ")
+    ln(f"**Total findings:** {len(findings)}  ")
+    ln(f"**Sources:** {len(sources)}  ")
+    ln(f"**Entities extracted:** {len(entities)}")
+    ln()
+    ln("---")
+    ln()
+
+    # ── Table of Contents ──
+    ln("## Contents")
+    ln()
+    ln("1. [Skills Overview](#skills-overview)")
+    ln("2. [High-Confidence Findings](#high-confidence-findings)")
+    ln("3. [Novel & Unique Findings](#novel--unique-findings)")
+    ln("4. [Skills — Detailed Summaries](#skills--detailed-summaries)")
+    ln("5. [AI & Developer Tools](#ai--developer-tools)")
+    ln("6. [Career Strategies](#career-strategies)")
+    ln("7. [Learning Resources](#learning-resources)")
+    ln("8. [Contradiction Register](#contradiction-register)")
+    ln("9. [All Findings Index](#all-findings-index)")
+    ln()
+    ln("---")
+    ln()
+
+    # ── 1. Skills Overview ──
+    ln("## Skills Overview")
+    ln()
+    skills = [e for e in entities if e["entity_type"] == "skill"]
+    if skills:
+        ln("| Rank | Skill | Confidence | Sources | Claims | Contradictions |")
+        ln("|------|-------|------------|---------|--------|----------------|")
+        for i, e in enumerate(skills, 1):
+            flag = " ⚠" if e["contradictions"] else ""
+            ln(
+                f"| {i} | **{e['name']}** | {_confidence_bar(e['confidence_score'])} | "
+                f"{len(e['corroborating_sources'])} | {len(e['claims'])} | "
+                f"{len(e['contradictions'])}{flag} |"
+            )
+    else:
+        ln("*No skill entities extracted.*")
+    ln()
+    ln("---")
+    ln()
+
+    # ── 2. High-Confidence Findings ──
+    ln("## High-Confidence Findings")
+    ln()
+    ln("*Findings from entities backed by 4+ independent sources, or relevance score 5/5.*")
+    ln()
+
+    high_conf_fids: set[str] = set()
+    for e in entities:
+        if e["confidence_score"] >= 4:
+            high_conf_fids.update(e["finding_ids"])
+    for f in findings:
+        if (f.get("relevance_score") or 0) >= 5:
+            high_conf_fids.add(f["id"])
+
+    high_conf = sorted(
+        [finding_by_id[fid] for fid in high_conf_fids if fid in finding_by_id],
+        key=lambda f: -(f.get("relevance_score") or 0),
+    )
+
+    if high_conf:
+        for f in high_conf[:100]:
+            num = finding_index.get(f["id"], "?")
+            tags = ", ".join(fid_to_entities.get(f["id"], []))
+            ln(f"**[#{num}]** {f['finding_text']}")
+            ln(
+                f"*{f['source_url']} · {f.get('source_type', '')} · "
+                f"relevance {f.get('relevance_score', '?')}/5"
+                + (f" · {tags}" if tags else "") + "*"
+            )
+            ln()
+    else:
+        ln("*No high-confidence findings found.*")
+        ln()
+
+    ln("---")
+    ln()
+
+    # ── 3. Novel & Unique Findings ──
+    ln("## Novel & Unique Findings")
+    ln()
+    if novel_findings:
+        ln(
+            f"*Top {min(top_n_novel, len(novel_findings))} findings by cosine distance "
+            f"from the corpus centroid — the most peripheral or unexpected findings.*"
+        )
+        ln()
+        for i, f in enumerate(novel_findings[:top_n_novel], 1):
+            score = f.get("novelty_score", 0.0)
+            num = finding_index.get(f["id"], "?")
+            ln(f"**[#{num}]** *(novelty {score:.3f})* {f['finding_text']}")
+            ln(f"*{f['source_url']} · {f.get('source_type', '')}*")
+            ln()
+    else:
+        ln("*Novelty scoring was skipped (`--no-embed`).*")
+        ln()
+
+    ln("---")
+    ln()
+
+    # ── 4-7. Per-category detailed summaries ──
+    categories = [
+        ("skill",    "## Skills — Detailed Summaries"),
+        ("tool",     "## AI & Developer Tools"),
+        ("strategy", "## Career Strategies"),
+        ("resource", "## Learning Resources"),
+    ]
+
+    for etype, header in categories:
+        ln(header)
+        ln()
+        cat = [e for e in entities if e["entity_type"] == etype]
+        if not cat:
+            ln(f"*No {etype} entities extracted.*")
+            ln()
+            ln("---")
+            ln()
+            continue
+
+        for e in cat:
+            ln(f"### {e['name']}")
+            ln()
+            ln(
+                f"**Confidence:** {_confidence_bar(e['confidence_score'])} &nbsp;|&nbsp; "
+                f"**Sources:** {len(e['corroborating_sources'])} &nbsp;|&nbsp; "
+                f"**Claims:** {len(e['claims'])}"
+            )
+            ln()
+
+            if e["prose_summary"]:
+                ln(e["prose_summary"])
+                ln()
+
+            if e["contradictions"]:
+                ln(f"**⚠ Contradictions detected ({len(e['contradictions'])}):**")
+                for ct in e["contradictions"]:
+                    a = ct["claim_a"][:120]
+                    b = ct["claim_b"][:120]
+                    ln(f'- *"{a}"* **vs** *"{b}"*')
+                    if ct["explanation"]:
+                        ln(f'  → {ct["explanation"]}')
+                ln()
+
+            ln("**Sources:**")
+            for url in e["corroborating_sources"][:10]:
+                ln(f"- {url}")
+            ln()
+
+            ref_nums = [
+                f"#{finding_index[fid]}"
+                for fid in e["finding_ids"][:30]
+                if fid in finding_index
+            ]
+            if ref_nums:
+                ln(f"**Findings:** {', '.join(ref_nums)}")
+                ln()
+
+        ln("---")
+        ln()
+
+    # ── 8. Contradiction Register ──
+    ln("## Contradiction Register")
+    ln()
+
+    conflicting = [f for f in findings if f.get("conflicting")]
+    all_contradictions: list[dict] = []
+    for e in entities:
+        for ct in e["contradictions"]:
+            all_contradictions.append({**ct, "entity": e["name"]})
+
+    if all_contradictions:
+        ln("### Detected via LLM scan")
+        ln()
+        ln("| Entity | Claim A | Claim B | Notes |")
+        ln("|--------|---------|---------|-------|")
+        for ct in all_contradictions:
+            a = ct["claim_a"][:80].replace("|", "\\|")
+            b = ct["claim_b"][:80].replace("|", "\\|")
+            note = ct.get("explanation", "")[:80].replace("|", "\\|")
+            ln(f"| **{ct['entity']}** | {a} | {b} | {note} |")
+        ln()
+    else:
+        ln("*No contradictions detected by LLM scan.*")
+        ln()
+
+    if conflicting:
+        ln(f"### Pre-flagged during live run ({len(conflicting)} findings)")
+        ln()
+        for f in conflicting:
+            num = finding_index.get(f["id"], "?")
+            ln(f"- **[#{num}]** {f['finding_text']}  ")
+            ln(f"  *{f['source_url']}*")
+        ln()
+
+    ln("---")
+    ln()
+
+    # ── 9. All Findings Index ──
+    ln("## All Findings Index")
+    ln()
+    ln(f"*{len(findings)} findings, ordered by discovery cycle.*")
+    ln()
+
+    for i, f in enumerate(findings, 1):
+        tags = ", ".join(fid_to_entities.get(f["id"], ["—"]))
+        novelty_str = ""
+        if f["id"] in novel_scores:
+            novelty_str = f" · novelty {novel_scores[f['id']]:.3f}"
+
+        text = f["finding_text"]
+        display = text[:200] + ("…" if len(text) > 200 else "")
+        ln(f"**#{i}** {display}")
+        ln(
+            f"*{f['source_url']} · {f.get('source_type', '')} · "
+            f"relevance {f.get('relevance_score', '?')}/5 · {tags}{novelty_str}*"
+        )
+        ln()
+
+    Path(output_path).write_text("\n".join(lines), encoding="utf-8")
+    console.print(f"\n[bold green]Written → {output_path}[/bold green]")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 async def _run(args: argparse.Namespace) -> None:
@@ -829,7 +1094,7 @@ async def _run(args: argparse.Namespace) -> None:
                 raise SystemExit(f"--render-only: no intermediate file at {intermediate_path}")
 
         elif not args.synthesis_only:
-            all_mentions = await _map_phase(brain, topic, findings, args.chunk_size, progress)
+            all_mentions = await _map_phase(brain, topic, findings, args.chunk_size, progress, args.mode)
             console.print(f"MAP: [bold]{len(all_mentions)}[/bold] entity mentions extracted")
 
             entities = _reduce_phase(all_mentions)
@@ -862,10 +1127,11 @@ async def _run(args: argparse.Namespace) -> None:
 
         # ── SYNTHESIS ──
         if entities and not args.render_only:
-            await _synthesis_phase(brain, topic, entities, progress)
+            await _synthesis_phase(brain, topic, entities, progress, args.mode)
 
     # ── RENDER ──
-    _render_report(
+    render_fn = _render_report_career if args.mode == "career" else _render_report
+    render_fn(
         args.output, topic, session_id, findings, sources,
         entities, novel_findings, args.top_n_novel,
     )
@@ -875,6 +1141,10 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Second-pass analysis of a LocalResearch session")
     p.add_argument("--db", default="researcher.db")
     p.add_argument("--session", default=None, help="Session ID (default: most recent)")
+    p.add_argument(
+        "--mode", default="technical", choices=["technical", "career"],
+        help="Analysis mode: 'technical' (models/tools/workflows/hardware) or 'career' (skills/tools/strategies/resources)",
+    )
     p.add_argument("--output", "-o", default="second_pass.md")
     p.add_argument("--config", default=str(_CONFIG_PATH))
     p.add_argument("--chunk-size", type=int, default=100, dest="chunk_size",
